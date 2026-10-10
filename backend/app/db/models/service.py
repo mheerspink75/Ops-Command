@@ -32,14 +32,6 @@ class ServiceDependency(Base):
     """Directed dependency: upstream -> downstream (downstream depends on upstream)."""
 
     __tablename__ = "service_dependencies"
-    __table_args__ = (
-        UniqueConstraint(
-            "upstream_service_id",
-            "downstream_service_id",
-            "dependency_type",
-            name="uq_service_dependency",
-        ),
-    )
 
     upstream_service_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
