@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -31,9 +31,6 @@ class Membership(Base):
     """A user's membership in an organization with a role."""
 
     __tablename__ = "memberships"
-    __table_args__ = (
-        UniqueConstraint("user_id", "organization_id", name="uq_membership_user_org"),
-    )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
