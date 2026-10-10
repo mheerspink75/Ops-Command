@@ -80,8 +80,7 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), server_default='now()', nullable=False),
     sa.ForeignKeyConstraint(['organization_id'], ['organizations.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('user_id', 'organization_id'),
-    sa.UniqueConstraint('user_id', 'organization_id', name='uq_membership_user_org')
+    sa.PrimaryKeyConstraint('user_id', 'organization_id')
     )
     op.create_table('playbooks',
     sa.Column('organization_id', sa.UUID(), nullable=False),
@@ -178,8 +177,7 @@ def upgrade() -> None:
     sa.Column('dependency_type', sa.String(length=32), nullable=False),
     sa.ForeignKeyConstraint(['downstream_service_id'], ['services.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['upstream_service_id'], ['services.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('upstream_service_id', 'downstream_service_id', 'dependency_type'),
-    sa.UniqueConstraint('upstream_service_id', 'downstream_service_id', 'dependency_type', name='uq_service_dependency')
+    sa.PrimaryKeyConstraint('upstream_service_id', 'downstream_service_id', 'dependency_type')
     )
     op.create_table('timeline_events',
     sa.Column('incident_id', sa.UUID(), nullable=False),
