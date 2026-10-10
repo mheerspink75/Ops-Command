@@ -1,89 +1,107 @@
 # OpsCommand
 
-**OpsCommand** is a self-contained incident-response command platform for small
-engineering teams. It gives responders a single, live view of an incident —
-status, severity, affected services, assigned roles, a shared timeline, action
-items, and one-click playbook execution — with real-time updates over
-WebSockets and durable background execution of runbooks.
+**OpsCommand** is a full-stack incident-response command platform for small
+engineering and on-call teams. When something breaks, responders need one
+calm, shared place to coordinate: who is in charge, which services are
+affected, what has been tried, and what happens next. OpsCommand gives them
+that single live view — incident status and severity, affected services and
+their dependencies, assigned roles, a shared timeline, action items, and
+one-click playbook execution — with real-time updates over WebSockets and
+durable background execution of runbooks.
 
-It is a full-stack reference implementation: a FastAPI + SQLAlchemy + Celery
-backend, a React + TypeScript + Vite frontend, Postgres for state, Redis for
-caching / pub-sub / the Celery broker, and a deterministic mock webhook so the
-whole stack runs locally with no paid external services.
+It is a complete, self-contained reference implementation: a FastAPI +
+SQLAlchemy + Celery backend, a React + TypeScript + Vite frontend, PostgreSQL
+for state, Redis for caching / pub-sub / the Celery broker, and a
+deterministic mock webhook so the whole stack runs locally with no paid
+external services.
 
-> **Status:** local development build. All test suites (backend, frontend unit,
-> and end-to-end) pass in the development environment described below. This is
-> not a production deployment; see [Known limitations](#known-limitations).
-
----
-
-## Table of contents
-
-- [Features](#features)
-- [Architecture overview](#architecture-overview)
-- [Technology choices](#technology-choices)
-- [Repository layout](#repository-layout)
-- [Local setup](#local-setup)
-- [Docker setup](#docker-setup)
-- [Environment-variable reference](#environment-variable-reference)
-- [Migrations](#migrations)
-- [Seed data](#seed-data)
-- [Testing](#testing)
-- [API documentation](#api-documentation)
-- [WebSocket design](#websocket-design)
-- [Background-worker design](#background-worker-design)
-- [Security model](#security-model)
-- [Observability](#observability)
-- [Screenshots](#screenshots)
-- [Known limitations](#known-limitations)
-- [Future improvements](#future-improvements)
-- [Further documentation](#further-documentation)
+> **Status:** local development build. This is **not** a production
+> deployment and there is **no public live demo**. Quality checks that can run
+> without external services pass in this environment (see
+> [Verified quality checks](#verified-quality-checks)); the backend test suite
+> and end-to-end suite require Postgres/Redis and a running stack. See
+> [Known limitations](#known-limitations).
 
 ---
 
-## Features
+## Why this project matters
 
-- **Organization-scoped multi-tenancy** — every resource is owned by an
-  organization; authorization is enforced server-side on every route.
-- **Role-based access control** — `owner`, `administrator`, `responder`, and
-  `viewer` roles with a privilege hierarchy; write actions require at least
-  `responder`.
-- **Incident lifecycle** — declare, investigate, identify, monitor, resolve,
-  and close incidents with a validated state machine and optimistic
-  concurrency control.
-- **Service catalog & dependencies** — track services, tiers, and upstream /
+Incident response is where engineering teams feel the most pressure: a
+production problem is live, customers are affected, and the team has to
+coordinate quickly under stress. Without a shared system of record, that
+coordination happens in chat threads and tribal knowledge — ownership is
+ambiguous, context is lost, and the post-incident story is reconstructed
+after the fact.
+
+OpsCommand addresses that operational problem by giving a team a single,
+live, auditable command view of an incident. It is a **production-inspired
+incident-management platform** in the same category as tools such as
+**PagerDuty**, **incident.io**, **FireHydrant**, and **Opsgenie**. These are
+**category comparisons only** — OpsCommand is not affiliated with, endorsed
+by, or equivalent to any of those products, and it does not claim feature
+parity with them. The point of the comparison is to make the *problem domain*
+immediately recognizable: this is the kind of software teams use to run
+incidents.
+
+The value it delivers:
+
+- **Faster, calmer response** — one shared view instead of scattered chat.
+- **Explicit ownership** — incident roles (commander, communications,
+  operations, scribe) make who-is-doing-what unambiguous.
+- **Accountable record** — an append-only, auditable timeline and action
+  items support post-incident review.
+- **Repeatable actions** — declarative playbooks encode the "what do we do
+  next" steps and run them durably in the background.
+
+## Key capabilities
+
+Verified capabilities present in the codebase (each is exercised by tests and
+documented in `docs/`):
+
+- **Incident lifecycle management** — declare, investigate, monitor, resolve,
+  and close incidents through a validated state machine.
+- **Organization-scoped access** — every resource belongs to an organization;
+  cross-organization access is blocked server-side.
+- **Role-based authorization** — `owner`, `administrator`, `responder`, and
+  `viewer` roles with a privilege hierarchy, enforced on every route.
+- **Shared timelines** — an append-only, auditable event log per incident.
+- **Action-item tracking** — follow-ups with assignees and status.
+- **Incident role assignments** — assign commander, communications,
+  operations, and scribe to team members.
+- **Service dependency tracking** — services, tiers, and upstream /
   downstream dependencies per organization.
-- **Shared timeline** — an append-only, auditable event log per incident
-  (declarations, status changes, playbook steps, notes).
-- **Action items** — track follow-ups with assignees and status.
-- **Role assignments** — assign incident roles (commander, communications,
-  operations, scribe) to team members.
-- **Playbooks** — ordered, declarative runbooks executed durably in the
-  background with idempotency, retries, and real-time progress.
+- **Automated playbooks** — ordered, declarative runbooks executed durably in
+  the background with idempotency, retries, and real-time progress.
 - **Real-time updates** — authenticated WebSockets push incident events to
   connected clients, bridged across processes via Redis pub/sub.
-- **Post-incident reports** — generate a Markdown report and download it.
-- **Audit log** — a tamper-evident, organization-scoped audit trail with
-  sanitized payloads.
+- **Audit logging** — an organization-scoped, sanitized audit trail.
+- **Post-incident reporting** — generate and download a Markdown report.
 - **Observability** — structured logging, Prometheus metrics, and optional
   OpenTelemetry tracing.
-- **Deterministic local stack** — a mock webhook service means playbooks and
-  tests never depend on a paid external API.
 
-## Architecture overview
+## Technical highlights
 
-OpsCommand is a three-tier system:
+A summary of the verified technologies and engineering concepts. The
+"why" behind each choice is in [Technology choices](#technology-choices).
 
-1. **Frontend** — a React single-page app (Vite + TypeScript + Tailwind) that
-   talks to the REST API and subscribes to incident WebSockets.
-2. **Backend API** — a FastAPI service exposing a versioned REST API
-   (`/api/v1`), health/readiness/metrics endpoints, and authenticated
-   WebSocket rooms. It owns all authorization and business rules.
-3. **Background worker** — a Celery worker (Redis broker) that executes
-   playbook runs durably, publishing progress back to the API via Redis pub/sub.
+- **Backend:** FastAPI, SQLAlchemy 2.0, Alembic migrations, Celery workers.
+- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, TanStack Query.
+- **Data & messaging:** PostgreSQL 16, Redis 7 (cache, broker, pub/sub).
+- **Real-time:** native WebSockets with an in-process hub + Redis pub/sub
+  bridge for cross-process delivery.
+- **Security:** JWT access + rotating refresh tokens, Argon2id password
+  hashing, RBAC, organization-scoped data isolation, login throttling.
+- **Delivery & quality:** Docker Compose, a three-level test pyramid
+  (pytest, Vitest, Playwright), Ruff, mypy, ESLint, and a CI workflow.
+- **Observability:** structlog, Prometheus metrics, optional OpenTelemetry.
 
-State lives in **PostgreSQL**; **Redis** provides the Celery broker, the
-login-throttle store, and the cross-process event bridge.
+## Architecture snapshot
+
+OpsCommand is a three-tier system. A React SPA talks to a versioned FastAPI
+REST API and subscribes to incident WebSockets. The API owns all
+authorization and business rules and writes to PostgreSQL. A separate Celery
+worker executes playbook runs durably and streams progress back to the API
+over Redis pub/sub, which the API bridges to connected browsers.
 
 ```mermaid
 flowchart LR
@@ -120,6 +138,124 @@ flowchart LR
     TASK -- "webhook step" --> WH
     SVC -- "throttle / tokens" --> RD
 ```
+
+The detailed request and real-time flows are in
+[Architecture overview](#architecture-overview).
+
+## Demo preview
+
+> **No screenshots are included yet.** Authentic captures have not been taken
+> in this environment (no browser / display tooling was available). Rather
+> than ship placeholder images, this repository provides a step-by-step
+> **screenshot capture plan** so real, current captures can be produced and
+> dropped in. See [`docs/screenshots/README.md`](docs/screenshots/README.md).
+
+When captures are available, the intended preview is:
+
+1. Login screen
+2. Incident dashboard
+3. Incident detail (command view)
+4. Incident timeline
+5. Real-time update activity
+6. Playbook execution progress
+7. Metrics / observability view
+8. Post-incident report workflow
+
+A guided, recruiter-facing walkthrough is in
+[`docs/demo-script.md`](docs/demo-script.md), and a recording checklist is in
+[`docs/demo-video-checklist.md`](docs/demo-video-checklist.md).
+
+## Quick start
+
+The fastest path to the full application locally is Docker Compose:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Then open <http://localhost:5173> and sign in with a demo account (see
+[Seed data](#seed-data)). The backend entrypoint applies migrations before
+starting the API; run `docker compose exec backend python -m app.seed` (or
+`make seed`) to load the demo organization, users, services, incidents, and
+playbook.
+
+For a manual, service-by-service setup (Python venv, Node, Postgres + Redis
+via Docker, the Celery worker, and the Vite dev server), see
+[Local setup](#local-setup).
+
+## Verified quality checks
+
+Checks that were **executed and passed in this environment** (no external
+services required):
+
+| Check | Command | Result |
+|-------|---------|--------|
+| Backend lint (Ruff) | `cd backend && python -m ruff check .` | pass |
+| Backend format (Ruff) | `cd backend && python -m ruff format --check .` | pass |
+| Backend types (mypy) | `cd backend && python -m mypy app` | pass |
+| Frontend lint (ESLint) | `cd frontend && npm run lint` | pass |
+| Frontend types (tsc) | `cd frontend && npm run typecheck` | pass |
+| Frontend unit tests (Vitest) | `cd frontend && npm test -- --run` | 63 passed |
+| Frontend production build | `cd frontend && npm run build` | pass |
+
+**Not run in this environment** (they require Postgres/Redis and a running
+stack, which were unavailable): the backend pytest suite and the Playwright
+end-to-end suite. Their commands and the conditions under which they were
+last verified are in [Testing](#testing). No coverage percentages,
+performance numbers, or production metrics are claimed anywhere in this
+repository.
+
+---
+
+## Table of contents
+
+- [Why this project matters](#why-this-project-matters)
+- [Key capabilities](#key-capabilities)
+- [Technical highlights](#technical-highlights)
+- [Architecture snapshot](#architecture-snapshot)
+- [Demo preview](#demo-preview)
+- [Quick start](#quick-start)
+- [Verified quality checks](#verified-quality-checks)
+- [Architecture overview](#architecture-overview)
+- [Technology choices](#technology-choices)
+- [Repository layout](#repository-layout)
+- [Local setup](#local-setup)
+- [Docker setup](#docker-setup)
+- [Environment-variable reference](#environment-variable-reference)
+- [Migrations](#migrations)
+- [Seed data](#seed-data)
+- [Testing](#testing)
+- [API documentation](#api-documentation)
+- [WebSocket design](#websocket-design)
+- [Background-worker design](#background-worker-design)
+- [Security model](#security-model)
+- [Observability](#observability)
+- [Screenshots](#screenshots)
+- [Known limitations](#known-limitations)
+- [Future improvements](#future-improvements)
+- [Further documentation](#further-documentation)
+
+---
+
+## Architecture overview
+
+The component diagram is in [Architecture snapshot](#architecture-snapshot).
+This section explains the two flows that matter most: a REST request, and a
+real-time event that crosses process boundaries.
+
+OpsCommand is a three-tier system:
+
+1. **Frontend** — a React single-page app (Vite + TypeScript + Tailwind) that
+   talks to the REST API and subscribes to incident WebSockets.
+2. **Backend API** — a FastAPI service exposing a versioned REST API
+   (`/api/v1`), health/readiness/metrics endpoints, and authenticated
+   WebSocket rooms. It owns all authorization and business rules.
+3. **Background worker** — a Celery worker (Redis broker) that executes
+   playbook runs durably, publishing progress back to the API via Redis pub/sub.
+
+State lives in **PostgreSQL**; **Redis** provides the Celery broker, the
+login-throttle store, and the cross-process event bridge.
 
 ### Request flow (REST)
 
@@ -368,8 +504,15 @@ python -m alembic revision --autogenerate -m "describe change"  # new revision
 The `Makefile` provides `make test`, `make lint`, `make typecheck`, and
 `make verify` (lint + typecheck + tests) as convenience targets.
 
-**Verified results in this environment:** backend 96/96 passing, frontend
-unit 63/63 passing, end-to-end 2/2 passing, and lint/type checks clean.
+**Results and how to reproduce them.** The checks that do not require
+external services were executed and passed in this environment: backend
+Ruff (lint + format) and mypy, and frontend ESLint, `tsc`, Vitest (63
+tests), and the production build. The backend pytest suite and the Playwright
+end-to-end suite require Postgres/Redis and a running stack; in the documented
+development environment they last reported **96 backend tests passing** and
+**2 end-to-end tests passing**. Those two numbers are point-in-time results
+from that environment, not a standing guarantee and not a CI-enforced
+threshold. No coverage percentages or performance metrics are claimed.
 
 ## API documentation
 
@@ -458,14 +601,15 @@ these choices.
 
 ## Screenshots
 
-> **Placeholder.** Screenshots could not be captured in the current
-> environment (no display / browser screenshot tooling available during this
-> build). Replace the following with real captures before publishing.
+> **No screenshots are included yet.** Authentic captures have not been taken
+> in this environment (no browser / display tooling was available). Rather
+> than ship placeholder images, this repository provides a step-by-step
+> **screenshot capture plan** so real, current captures can be produced and
+> dropped in. See [`docs/screenshots/README.md`](docs/screenshots/README.md).
 
-- `docs/screenshots/login.png` — _placeholder: login screen_
-- `docs/screenshots/dashboard.png` — _placeholder: incident dashboard_
-- `docs/screenshots/incident-detail.png` — _placeholder: live incident command view_
-- `docs/screenshots/playbook-run.png` — _placeholder: playbook execution progress_
+The intended captures (login, dashboard, incident detail, timeline, real-time
+activity, playbook run, metrics, and post-incident report) are listed with
+exact steps, required demo state, and recommended dimensions in that plan.
 
 ## Known limitations
 
@@ -499,9 +643,21 @@ these choices.
 
 ## Further documentation
 
+Technical reference:
+
 - [`docs/architecture.md`](docs/architecture.md) — deep dive on components and data flow
 - [`docs/security.md`](docs/security.md) — security model and threat considerations
 - [`docs/testing.md`](docs/testing.md) — testing strategy and how to run each suite
 - [`docs/api-examples.md`](docs/api-examples.md) — curated REST + WebSocket examples
-- [`docs/demo-script.md`](docs/demo-script.md) — a guided walkthrough of the 9-step workflow
 - [`docs/decisions/`](docs/decisions/) — architecture decision records (ADRs)
+
+Demonstration and portfolio:
+
+- [`docs/demo-script.md`](docs/demo-script.md) — a recruiter-facing walkthrough of the incident workflow
+- [`docs/demo-video-checklist.md`](docs/demo-video-checklist.md) — how to record and publish a demo video
+- [`docs/screenshots/README.md`](docs/screenshots/README.md) — screenshot capture plan
+- [`docs/deployment-options.md`](docs/deployment-options.md) — how to run this beyond a laptop (future/optional path)
+- [`docs/resume-project-entry.md`](docs/resume-project-entry.md) — reusable resume and interview content
+- [`docs/portfolio-showcase.md`](docs/portfolio-showcase.md) — a portfolio case study
+- [`docs/portfolio-audit.md`](docs/portfolio-audit.md) — the portfolio audit that motivated these changes
+- [`docs/recruiter-impact-review.md`](docs/recruiter-impact-review.md) — a transparent before/after impact review
